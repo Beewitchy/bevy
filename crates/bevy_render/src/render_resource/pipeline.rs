@@ -7,7 +7,7 @@ use bevy_asset::Handle;
 use std::{borrow::Cow, ops::Deref};
 use wgpu::{
     BufferAddress, ColorTargetState, DepthStencilState, MultisampleState, PrimitiveState,
-    PushConstantRange, VertexAttribute, VertexFormat, VertexStepMode,
+    PushConstantRange, ShaderLocation, VertexAttribute, VertexFormat, VertexStepMode,
 };
 
 define_atomic_id!(RenderPipelineId);
@@ -130,6 +130,8 @@ pub struct VertexBufferLayout {
     pub step_mode: VertexStepMode,
     /// The list of attributes which comprise a single vertex.
     pub attributes: Vec<VertexAttribute>,
+    /// Identifiers used to place vertex buffer layout locations into the shader source.
+    pub attribute_names: Vec<&'static str>,
 }
 
 impl VertexBufferLayout {
@@ -156,7 +158,45 @@ impl VertexBufferLayout {
             array_stride: offset,
             step_mode,
             attributes,
+            attribute_names: vec![],
         }
+    }
+
+    /// Creates a new densely packed [`VertexBufferLayout`] from an iterator of vertex formats.
+    /// Iteration order determines the `shader_location` and `offset` of the
+    /// [`VertexAttributes`](VertexAttribute).
+    /// The first iterated item will have a `offset` of zero.
+    /// `initial_shader_location` determines the first `shader_location`.
+    /// The `array_stride` is the sum of the size of the iterated [`VertexFormats`](VertexFormat)
+    /// (in bytes)--If this doesn't match `expected_stride`, an error is returned.
+    pub fn from_named_attributes<T: IntoIterator<Item = (&'static str, VertexFormat)>>(
+        expected_stride: BufferAddress,
+        initial_shader_location: ShaderLocation,
+        step_mode: VertexStepMode,
+        items: T,
+    ) -> anyhow::Result<Self> {
+        let mut offset = 0;
+        let mut attributes = Vec::new();
+        let mut attribute_names = Vec::new();
+        for (index, (name, format)) in items.into_iter().enumerate() {
+            attributes.push(VertexAttribute {
+                format,
+                offset,
+                shader_location: initial_shader_location + index as ShaderLocation,
+            });
+            attribute_names.push(name);
+            offset += format.size();
+        }
+        anyhow::ensure!(
+            offset == expected_stride,
+            "Resulting layout does not have the expected stride."
+        );
+        Ok(VertexBufferLayout {
+            array_stride: offset,
+            step_mode,
+            attributes,
+            attribute_names,
+        })
     }
 }
 

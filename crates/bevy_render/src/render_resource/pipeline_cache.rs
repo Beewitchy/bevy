@@ -29,6 +29,8 @@ use crate::render_resource::resource_macros::*;
 render_resource_wrapper!(ErasedShaderModule, wgpu::ShaderModule);
 render_resource_wrapper!(ErasedPipelineLayout, wgpu::PipelineLayout);
 
+use super::VertexBufferLayout;
+
 /// A descriptor for a [`Pipeline`].
 ///
 /// Used to store an heterogenous collection of render and compute pipeline descriptors together.
@@ -168,6 +170,7 @@ impl ShaderCache {
         pipeline: CachedPipelineId,
         handle: &Handle<Shader>,
         shader_defs: &[ShaderDefVal],
+        buffers: &[VertexBufferLayout],
     ) -> Result<ErasedShaderModule, PipelineCacheError> {
         let shader = self
             .shaders
@@ -212,6 +215,7 @@ impl ShaderCache {
                 let processed = self.processor.process(
                     shader,
                     &shader_defs,
+                    &buffers,
                     &self.shaders,
                     &self.import_path_shaders,
                 )?;
@@ -539,6 +543,7 @@ impl PipelineCache {
             id,
             &descriptor.vertex.shader,
             &descriptor.vertex.shader_defs,
+            &descriptor.vertex.buffers
         ) {
             Ok(module) => module,
             Err(err) => {
@@ -552,6 +557,7 @@ impl PipelineCache {
                 id,
                 &fragment.shader,
                 &fragment.shader_defs,
+                default()
             ) {
                 Ok(module) => module,
                 Err(err) => {
@@ -624,6 +630,7 @@ impl PipelineCache {
             id,
             &descriptor.shader,
             &descriptor.shader_defs,
+            default()
         ) {
             Ok(module) => module,
             Err(err) => {

@@ -220,9 +220,11 @@ impl Mesh {
     pub fn get_mesh_vertex_buffer_layout(&self) -> MeshVertexBufferLayout {
         let mut attributes = Vec::with_capacity(self.attributes.len());
         let mut attribute_ids = Vec::with_capacity(self.attributes.len());
+        let mut attribute_names = Vec::with_capacity(self.attributes.len());
         let mut accumulated_offset = 0;
         for (index, data) in self.attributes.values().enumerate() {
             attribute_ids.push(data.attribute.id);
+            attribute_names.push(data.attribute.name);
             attributes.push(VertexAttribute {
                 offset: accumulated_offset,
                 format: data.attribute.format,
@@ -236,6 +238,7 @@ impl Mesh {
                 array_stride: accumulated_offset,
                 step_mode: VertexStepMode::Vertex,
                 attributes,
+                attribute_names
             },
             attribute_ids,
         })
@@ -474,12 +477,14 @@ impl InnerMeshVertexBufferLayout {
         attribute_descriptors: &[VertexAttributeDescriptor],
     ) -> Result<VertexBufferLayout, MissingVertexAttributeError> {
         let mut attributes = Vec::with_capacity(attribute_descriptors.len());
+        let mut attribute_names = Vec::with_capacity(attribute_descriptors.len());
         for attribute_descriptor in attribute_descriptors {
             if let Some(index) = self
-                .attribute_ids
-                .iter()
-                .position(|id| *id == attribute_descriptor.id)
+            .attribute_ids
+            .iter()
+            .position(|id| *id == attribute_descriptor.id)
             {
+                attribute_names.push(attribute_descriptor.name);
                 let layout_attribute = &self.layout.attributes[index];
                 attributes.push(VertexAttribute {
                     format: layout_attribute.format,
@@ -499,6 +504,7 @@ impl InnerMeshVertexBufferLayout {
             array_stride: self.layout.array_stride,
             step_mode: self.layout.step_mode,
             attributes,
+            attribute_names,
         })
     }
 }

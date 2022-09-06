@@ -424,6 +424,7 @@ pub struct ShaderProcessor {
     define_regex: Regex,
     def_regex: Regex,
     def_regex_delimited: Regex,
+    location_regex: Regex,
 }
 
 impl Default for ShaderProcessor {
@@ -438,6 +439,7 @@ impl Default for ShaderProcessor {
             define_regex: Regex::new(r"^\s*#\s*define\s+([\w|\d|_]+)\s*([-\w|\d]+)?").unwrap(),
             def_regex: Regex::new(r"#\s*([\w|\d|_]+)").unwrap(),
             def_regex_delimited: Regex::new(r"#\s*\{([\w|\d|_]+)\}").unwrap(),
+            location_regex: Regex::new(r"@location\((^\d|[\w|\d|_]+)\)").unwrap(),
         }
     }
 }
@@ -482,6 +484,7 @@ impl ShaderProcessor {
         &self,
         shader: &Shader,
         shader_defs: &[ShaderDefVal],
+        buffers: &[super::VertexBufferLayout],
         shaders: &HashMap<Handle<Shader>, Shader>,
         import_handles: &HashMap<ShaderImport, Handle<Shader>>,
     ) -> Result<ProcessedShader, ProcessShaderError> {
@@ -491,13 +494,20 @@ impl ShaderProcessor {
                     (k.clone(), v.clone())
                 }
             }));
-        self.process_inner(shader, &mut shader_defs_unique, shaders, import_handles)
+        self.process_inner(
+            shader,
+            &mut shader_defs_unique,
+            buffers,
+            shaders,
+            import_handles,
+        )
     }
 
     fn process_inner(
         &self,
         shader: &Shader,
         shader_defs_unique: &mut HashMap<String, ShaderDefVal>,
+        buffers: &[super::VertexBufferLayout],
         shaders: &HashMap<Handle<Shader>, Shader>,
         import_handles: &HashMap<ShaderImport, Handle<Shader>>,
     ) -> Result<ProcessedShader, ProcessShaderError> {
@@ -507,6 +517,24 @@ impl ShaderProcessor {
             Source::SpirV(source) => {
                 return Ok(ProcessedShader::SpirV(source.clone()));
             }
+        };
+
+        let any_named_attributes = buffers
+            .iter()
+            .any(|buffer| buffer.attributes.len() == buffer.attribute_names.len());
+
+        let find_location_replacement = |name: &str| -> String {
+            for buffer in buffers {
+                if buffer.attributes.len() != buffer.attribute_names.len() {
+                    continue;
+                }
+                let attribute_index = buffer.attribute_names.iter().position(|&r| r == name);
+                if let Some(attribute_index) = attribute_index {
+                    let attribute = buffer.attributes[attribute_index];
+                    return attribute.shader_location.to_string();
+                }
+            }
+            String::from(name)
         };
 
         let mut scopes = vec![Scope::new(true)];
@@ -670,6 +698,7 @@ impl ShaderProcessor {
                         &import,
                         shader,
                         shader_defs_unique,
+                        buffers,
                         &mut final_string,
                     )?;
                 } else if let Some(cap) = SHADER_IMPORT_PROCESSOR
@@ -683,6 +712,7 @@ impl ShaderProcessor {
                         &import,
                         shader,
                         shader_defs_unique,
+                        buffers,
                         &mut final_string,
                     )?;
                 } else if SHADER_IMPORT_PROCESSOR
@@ -710,6 +740,15 @@ impl ShaderProcessor {
                     } else {
                         shader_defs_unique.insert(name.clone(), ShaderDefVal::Bool(name, true));
                     }
+                } else if any_named_attributes && self.location_regex.is_match(line) {
+                    let replaced_line =
+                        self.location_regex
+                            .replacen(line, 10, |captures: &regex::Captures| {
+                                let location = find_location_replacement(&captures[1]);
+                                format!("@location({})", location)
+                            });
+                    final_string.push_str(replaced_line.as_ref());
+                    final_string.push('\n');
                 } else {
                     let mut line_with_defs = line.to_string();
                     for capture in self.def_regex.captures_iter(line) {
@@ -758,14 +797,20 @@ impl ShaderProcessor {
         import: &ShaderImport,
         shader: &Shader,
         shader_defs_unique: &mut HashMap<String, ShaderDefVal>,
+        buffers: &[super::VertexBufferLayout],
         final_string: &mut String,
     ) -> Result<(), ProcessShaderError> {
         let imported_shader = import_handles
             .get(import)
             .and_then(|handle| shaders.get(handle))
             .ok_or_else(|| ProcessShaderError::UnresolvedImport(import.clone()))?;
-        let imported_processed =
-            self.process_inner(imported_shader, shader_defs_unique, shaders, import_handles)?;
+        let imported_processed = self.process_inner(
+            imported_shader,
+            shader_defs_unique,
+            buffers,
+            shaders,
+            import_handles,
+        )?;
 
         match &shader.source {
             Source::Wgsl(_) => {
@@ -1072,6 +1117,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL),
                 &["TEXTURE".into()],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1111,6 +1157,7 @@ fn vertex(
         let result = processor
             .process(
                 &Shader::from_wgsl(WGSL),
+                &[],
                 &[],
                 &HashMap::default(),
                 &HashMap::default(),
@@ -1154,6 +1201,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_ELSE),
                 &[],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1196,6 +1244,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_ELSE_IFDEF),
                 &[],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1235,6 +1284,7 @@ fn vertex(
         let result = processor
             .process(
                 &Shader::from_wgsl(WGSL_ELSE_IFDEF_NO_ELSE_FALLBACK),
+                &[],
                 &[],
                 &HashMap::default(),
                 &HashMap::default(),
@@ -1279,6 +1329,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_ELSE_IFDEF),
                 &["TEXTURE".into()],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1322,6 +1373,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_ELSE_IFDEF),
                 &["SECOND_TEXTURE".into()],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1365,6 +1417,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_ELSE_IFDEF),
                 &["THIRD_TEXTURE".into()],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1408,6 +1461,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_ELSE_IFDEF),
                 &["SECOND_TEXTURE".into(), "THIRD_TEXTURE".into()],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1454,6 +1508,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_COMPLICATED_ELSE_IFDEF),
                 &["IS_DEFINED".into()],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1471,6 +1526,7 @@ fn vertex(
         let result = processor.process(
             &Shader::from_wgsl(INPUT),
             &[],
+            &[],
             &HashMap::default(),
             &HashMap::default(),
         );
@@ -1486,6 +1542,7 @@ fn vertex(
         let processor = ShaderProcessor::default();
         let result = processor.process(
             &Shader::from_wgsl(INPUT),
+            &[],
             &[],
             &HashMap::default(),
             &HashMap::default(),
@@ -1504,6 +1561,7 @@ fn foo() { }
         let result = processor
             .process(
                 &Shader::from_wgsl(INPUT),
+                &[],
                 &[],
                 &HashMap::default(),
                 &HashMap::default(),
@@ -1539,7 +1597,13 @@ fn bar() { }
             foo_handle.clone_weak(),
         );
         let result = processor
-            .process(&Shader::from_wgsl(INPUT), &[], &shaders, &import_handles)
+            .process(
+                &Shader::from_wgsl(INPUT),
+                &[],
+                &[],
+                &shaders,
+                &import_handles,
+            )
             .unwrap();
         assert_eq!(result.get_wgsl_source().unwrap(), EXPECTED);
     }
@@ -1576,6 +1640,7 @@ void bar() { }
         let result = processor
             .process(
                 &Shader::from_glsl(INPUT, ShaderStage::Vertex),
+                &[],
                 &[],
                 &shaders,
                 &import_handles,
@@ -1617,6 +1682,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_NESTED_IFDEF),
                 &["TEXTURE".into()],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1659,6 +1725,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_NESTED_IFDEF_ELSE),
                 &["TEXTURE".into()],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1698,6 +1765,7 @@ fn vertex(
         let result = processor
             .process(
                 &Shader::from_wgsl(WGSL_NESTED_IFDEF),
+                &[],
                 &[],
                 &HashMap::default(),
                 &HashMap::default(),
@@ -1739,6 +1807,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_NESTED_IFDEF_ELSE),
                 &[],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1779,6 +1848,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_NESTED_IFDEF),
                 &["ATTRIBUTE".into()],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1821,6 +1891,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL_NESTED_IFDEF),
                 &["TEXTURE".into(), "ATTRIBUTE".into()],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -1868,6 +1939,7 @@ fn in_main_present() { }
             .process(
                 &Shader::from_wgsl(INPUT),
                 &["MAIN_PRESENT".into(), "IMPORT_PRESENT".into()],
+                &[],
                 &shaders,
                 &import_handles,
             )
@@ -1923,6 +1995,7 @@ fn in_main() { }
             .process(
                 &Shader::from_wgsl(INPUT),
                 &["DEEP".into()],
+                &[],
                 &shaders,
                 &import_handles,
             )
@@ -1981,6 +2054,7 @@ fn baz() { }
             .process(
                 &Shader::from_wgsl(INPUT),
                 &["FOO".into()],
+                &[],
                 &shaders,
                 &import_handles,
             )
@@ -1988,7 +2062,13 @@ fn baz() { }
         assert_eq!(result.get_wgsl_source().unwrap(), EXPECTED_FOO);
 
         let result = processor
-            .process(&Shader::from_wgsl(INPUT), &[], &shaders, &import_handles)
+            .process(
+                &Shader::from_wgsl(INPUT),
+                &[],
+                &[],
+                &shaders,
+                &import_handles,
+            )
             .unwrap();
         assert_eq!(result.get_wgsl_source().unwrap(), EXPECTED);
     }
@@ -2031,6 +2111,7 @@ fn vertex(
         let result_missing = processor.process(
             &Shader::from_wgsl(WGSL),
             &["TEXTURE".into()],
+            &[],
             &HashMap::default(),
             &HashMap::default(),
         );
@@ -2134,6 +2215,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL),
                 &[ShaderDefVal::Int("TEXTURE".to_string(), 3)],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -2144,6 +2226,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL),
                 &[ShaderDefVal::Int("TEXTURE".to_string(), 7)],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -2152,6 +2235,7 @@ fn vertex(
 
         let result_missing = processor.process(
             &Shader::from_wgsl(WGSL),
+            &[],
             &[],
             &HashMap::default(),
             &HashMap::default(),
@@ -2166,6 +2250,7 @@ fn vertex(
         let result_wrong_type = processor.process(
             &Shader::from_wgsl(WGSL),
             &[ShaderDefVal::Bool("TEXTURE".to_string(), true)],
+            &[],
             &HashMap::default(),
             &HashMap::default(),
         );
@@ -2272,6 +2357,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL),
                 &[ShaderDefVal::Bool("TEXTURE".to_string(), true)],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -2282,6 +2368,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL),
                 &[ShaderDefVal::Bool("TEXTURE".to_string(), false)],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -2382,6 +2469,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL),
                 &[ShaderDefVal::Bool("TEXTURE".to_string(), true)],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -2392,6 +2480,7 @@ fn vertex(
             .process(
                 &Shader::from_wgsl(WGSL),
                 &[ShaderDefVal::Bool("TEXTURE".to_string(), false)],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -2400,6 +2489,7 @@ fn vertex(
 
         let result_missing = processor.process(
             &Shader::from_wgsl(WGSL),
+            &[],
             &[],
             &HashMap::default(),
             &HashMap::default(),
@@ -2414,6 +2504,7 @@ fn vertex(
         let result_wrong_type = processor.process(
             &Shader::from_wgsl(WGSL),
             &[ShaderDefVal::Int("TEXTURE".to_string(), 7)],
+            &[],
             &HashMap::default(),
             &HashMap::default(),
         );
@@ -2497,6 +2588,7 @@ fn vertex(
                     ShaderDefVal::Int("FIRST_VALUE".to_string(), 5),
                     ShaderDefVal::Int("SECOND_VALUE".to_string(), 3),
                 ],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -2526,6 +2618,7 @@ defined at end
             .process(
                 &Shader::from_wgsl(WGSL),
                 &[],
+                &[],
                 &HashMap::default(),
                 &HashMap::default(),
             )
@@ -2553,6 +2646,7 @@ This should not be part of the result
         let result = processor
             .process(
                 &Shader::from_wgsl(WGSL),
+                &[],
                 &[],
                 &HashMap::default(),
                 &HashMap::default(),
@@ -2589,6 +2683,7 @@ bool: false
         let result = processor
             .process(
                 &Shader::from_wgsl(WGSL),
+                &[],
                 &[],
                 &HashMap::default(),
                 &HashMap::default(),
@@ -2637,7 +2732,13 @@ true
             );
         }
         let result = processor
-            .process(&Shader::from_wgsl(INPUT), &[], &shaders, &import_handles)
+            .process(
+                &Shader::from_wgsl(INPUT),
+                &[],
+                &[],
+                &shaders,
+                &import_handles,
+            )
             .unwrap();
         assert_eq!(result.get_wgsl_source().unwrap(), EXPECTED);
     }
