@@ -27,7 +27,7 @@ use bevy_ecs::event::{Events, ManualEventReader};
 use bevy_ecs::prelude::*;
 use bevy_input::{
     keyboard::KeyboardInput,
-    mouse::{MouseButtonInput, MouseMotion, MouseScrollUnit, MouseWheel},
+    mouse::{MouseButtonInput, MouseMotion, MouseScrollMomentumPhase, MouseScrollUnit, MouseWheel},
     touch::TouchInput,
 };
 use bevy_math::{ivec2, DVec2, Vec2};
@@ -48,6 +48,7 @@ pub use winit::platform::android::activity::AndroidApp;
 use winit::{
     event::{self, DeviceEvent, Event, StartCause, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopWindowTarget},
+    window::CursorGrabMode,
 };
 
 use crate::accessibility::{AccessKitAdapters, AccessibilityPlugin, WinitActionHandlers};
@@ -464,12 +465,26 @@ pub fn winit_runner(mut app: App) {
                             state: converters::convert_element_state(state),
                         });
                     }
-                    WindowEvent::MouseWheel { delta, .. } => match delta {
+                    WindowEvent::MouseWheel {
+                        delta,
+                        momentum_phase,
+                        ..
+                    } => match delta {
                         event::MouseScrollDelta::LineDelta(x, y) => {
                             input_events.mouse_wheel_input.send(MouseWheel {
                                 unit: MouseScrollUnit::Line,
                                 x,
                                 y,
+                                momentum_phase: match momentum_phase {
+                                    event::MomentumPhase::None => {
+                                        MouseScrollMomentumPhase::RegularMovement
+                                    }
+                                    event::MomentumPhase::Started
+                                    | event::MomentumPhase::Moved
+                                    | event::MomentumPhase::Ended => {
+                                        MouseScrollMomentumPhase::Momentum
+                                    }
+                                },
                             });
                         }
                         event::MouseScrollDelta::PixelDelta(p) => {
@@ -477,6 +492,16 @@ pub fn winit_runner(mut app: App) {
                                 unit: MouseScrollUnit::Pixel,
                                 x: p.x as f32,
                                 y: p.y as f32,
+                                momentum_phase: match momentum_phase {
+                                    event::MomentumPhase::None => {
+                                        MouseScrollMomentumPhase::RegularMovement
+                                    }
+                                    event::MomentumPhase::Started
+                                    | event::MomentumPhase::Moved
+                                    | event::MomentumPhase::Ended => {
+                                        MouseScrollMomentumPhase::Momentum
+                                    }
+                                },
                             });
                         }
                     },
