@@ -124,6 +124,26 @@ pub enum MouseScrollUnit {
     Pixel,
 }
 
+/// The scroll momentum phase for touch input scrolling.
+///
+/// Describes how a value of a [`MouseWheel`](crate::mouse::MouseWheel) event has to be interpreted.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[cfg_attr(feature = "bevy_reflect", derive(Reflect), reflect(Debug, PartialEq))]
+#[cfg_attr(feature = "serialize", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    all(feature = "serialize", feature = "bevy_reflect"),
+    reflect(Serialize, Deserialize)
+)]
+pub enum MouseScrollMomentumPhase {
+    /// The event was generated during regular mouse movement.
+    RegularMovement,
+    /// The event was generated during momentum movement, for example after
+    /// quickly swiping down on a trackpad.
+    ///
+    /// Only available when supported by the host system.
+    Momentum,
+}
+
 /// A mouse wheel event.
 ///
 /// This event is the translated version of the `WindowEvent::MouseWheel` from the `winit` crate.
@@ -137,6 +157,8 @@ pub enum MouseScrollUnit {
 pub struct MouseWheel {
     /// The mouse scroll unit.
     pub unit: MouseScrollUnit,
+    /// Momentum scroll phase
+    pub momentum_phase: MouseScrollMomentumPhase,
     /// The horizontal scroll value.
     pub x: f32,
     /// The vertical scroll value.

@@ -11,7 +11,7 @@ use bevy_ecs::{
 use bevy_input::{
     gestures::*,
     keyboard::KeyboardFocusLost,
-    mouse::{MouseButtonInput, MouseMotion, MouseScrollUnit, MouseWheel},
+    mouse::{MouseButtonInput, MouseMotion, MouseScrollMomentumPhase, MouseScrollUnit, MouseWheel},
 };
 use bevy_log::{error, trace, warn};
 use bevy_math::{ivec2, DVec2, Vec2};
@@ -249,6 +249,14 @@ impl<T: Event> ApplicationHandler<T> for WinitAppRunnerState<T> {
             }
         }
 
+        let get_momentum_phase =
+            |winit_momentum_phase: event::MomentumPhase| match winit_momentum_phase {
+                event::MomentumPhase::None => MouseScrollMomentumPhase::RegularMovement,
+                event::MomentumPhase::Started
+                | event::MomentumPhase::Moved
+                | event::MomentumPhase::Ended => MouseScrollMomentumPhase::Momentum,
+            };
+
         match event {
             WindowEvent::Resized(size) => {
                 react_to_resize(window, &mut win, size, &mut window_resized);
@@ -325,10 +333,15 @@ impl<T: Event> ApplicationHandler<T> for WinitAppRunnerState<T> {
                     y: delta.y,
                 }));
             }
-            WindowEvent::MouseWheel { delta, .. } => match delta {
+            WindowEvent::MouseWheel {
+                delta,
+                momentum_phase,
+                ..
+            } => match delta {
                 event::MouseScrollDelta::LineDelta(x, y) => {
                     self.bevy_window_events.send(MouseWheel {
                         unit: MouseScrollUnit::Line,
+                        momentum_phase: get_momentum_phase(momentum_phase),
                         x,
                         y,
                         window,
@@ -337,6 +350,7 @@ impl<T: Event> ApplicationHandler<T> for WinitAppRunnerState<T> {
                 event::MouseScrollDelta::PixelDelta(p) => {
                     self.bevy_window_events.send(MouseWheel {
                         unit: MouseScrollUnit::Pixel,
+                        momentum_phase: get_momentum_phase(momentum_phase),
                         x: p.x as f32,
                         y: p.y as f32,
                         window,
